@@ -1,0 +1,8 @@
+backend/.env.example
+
+backend/node_modules/*
+frontend/node_modules/*
+backend/.env
+frontend/dist/*
+backend/pnpm-lock.yaml
+frontend/pnpm-lock.yaml
