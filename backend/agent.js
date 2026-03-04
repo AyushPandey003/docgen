@@ -74,11 +74,12 @@ Return ONLY the JSON, nothing else.`;
 }
 
 // ── Gemini Client ──────────────────────────────────────────────────────────
-function createModel(modelName = DEFAULT_MODEL) {
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error("GEMINI_API_KEY is missing in backend .env");
+function createModel(apiKey, modelName = DEFAULT_MODEL) {
+  const key = apiKey || process.env.GEMINI_API_KEY;
+  if (!key) {
+    throw new Error("No API key provided. Please add your Gemini API key in the app settings.");
   }
-  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+  const genAI = new GoogleGenerativeAI(key);
   return genAI.getGenerativeModel({
     model: modelName,
     systemInstruction: buildSystemPrompt(),
@@ -90,12 +91,12 @@ function isModelNotFound(err) {
   return err?.status === 404 || m.includes("is not found") || m.includes("not supported");
 }
 
-async function callWithFallback(task, preferred) {
+async function callWithFallback(task, preferred, apiKey) {
   const models = [...new Set([preferred, ...MODEL_CANDIDATES].filter(Boolean))];
   let lastErr;
   for (const name of models) {
     try {
-      const model = createModel(name);
+      const model = createModel(apiKey, name);
       return { result: await task(model), usedModel: name };
     } catch (e) {
       lastErr = e;
@@ -151,10 +152,17 @@ function validatePlan(plan) {
 /**
  * Run the agent with a text prompt (no PDF).
  */
-async function runAgentWithPrompt({ prompt, theme, modelName }) {
+async function runAgentWithPrompt({ prompt, theme, modelName, apiKey, layoutBlocks }) {
+  let layoutInstruction = "";
+  if (layoutBlocks && layoutBlocks.length > 0) {
+    const seq = layoutBlocks.map((b, i) => `${i + 1}. ${b.type}${b.hint ? ` (Hint: ${b.hint})` : ""}`).join("\n");
+    layoutInstruction = `\n\nCRITICAL LAYOUT INSTRUCTION:\nYou MUST use EXACTLY this sequence of block types in your 'blocks' array. Do not add, remove, or reorder blocks. Fill in the content for each block based on the prompt and hints:\n${seq}`;
+  }
+
   const userMessage =
     `Create a beautifully designed document based on this request:\n\n${prompt}` +
-    (theme ? `\n\nPreferred theme: ${theme}` : "");
+    (theme ? `\n\nPreferred theme: ${theme}` : "") +
+    layoutInstruction;
 
   const { result, usedModel } = await callWithFallback(async (model) => {
     const res = await model.generateContent({
@@ -162,14 +170,14 @@ async function runAgentWithPrompt({ prompt, theme, modelName }) {
       contents: [{ role: "user", parts: [{ text: userMessage }] }],
     });
     return res.response.text();
-  }, modelName || DEFAULT_MODEL);
+  }, modelName || DEFAULT_MODEL, apiKey);
 
   let plan;
   try {
     plan = parseAgentJson(result);
   } catch {
     // Repair attempt
-    const repair = createModel(usedModel);
+    const repair = createModel(apiKey, usedModel);
     const repairRes = await repair.generateContent({
       generationConfig: { responseMimeType: "application/json", temperature: 0 },
       contents: [{ role: "user", parts: [{ text: "Fix this into valid JSON, keep the same content:\n\n" + result }] }],
@@ -183,16 +191,23 @@ async function runAgentWithPrompt({ prompt, theme, modelName }) {
 /**
  * Run the agent with a PDF file as context.
  */
-async function runAgentWithPdf({ pdfPath, prompt, theme, modelName }) {
+async function runAgentWithPdf({ pdfPath, prompt, theme, modelName, apiKey, layoutBlocks }) {
   const absPath = path.isAbsolute(pdfPath) ? pdfPath : path.resolve(process.cwd(), pdfPath);
   if (!fs.existsSync(absPath)) throw new Error(`PDF not found: ${absPath}`);
 
   const pdfBase64 = fs.readFileSync(absPath).toString("base64");
 
+  let layoutInstruction = "";
+  if (layoutBlocks && layoutBlocks.length > 0) {
+    const seq = layoutBlocks.map((b, i) => `${i + 1}. ${b.type}${b.hint ? ` (Hint: ${b.hint})` : ""}`).join("\n");
+    layoutInstruction = `\n\nCRITICAL LAYOUT INSTRUCTION:\nYou MUST use EXACTLY this sequence of block types in your 'blocks' array. Do not add, remove, or reorder blocks. Fill in the content for each block based on the PDF and hints:\n${seq}`;
+  }
+
   const userMessage =
     `Analyze the attached PDF carefully and create a beautifully designed document.\n\n` +
     `Instructions: ${prompt || "Create a comprehensive, visually rich chapter based on the PDF content. Use specific names, data, and details from the PDF."}` +
-    (theme ? `\n\nPreferred theme: ${theme}` : "");
+    (theme ? `\n\nPreferred theme: ${theme}` : "") +
+    layoutInstruction;
 
   const { result, usedModel } = await callWithFallback(async (model) => {
     const res = await model.generateContent({
@@ -206,13 +221,13 @@ async function runAgentWithPdf({ pdfPath, prompt, theme, modelName }) {
       }],
     });
     return res.response.text();
-  }, modelName || DEFAULT_MODEL);
+  }, modelName || DEFAULT_MODEL, apiKey);
 
   let plan;
   try {
     plan = parseAgentJson(result);
   } catch {
-    const repair = createModel(usedModel);
+    const repair = createModel(apiKey, usedModel);
     const repairRes = await repair.generateContent({
       generationConfig: { responseMimeType: "application/json", temperature: 0 },
       contents: [{ role: "user", parts: [{ text: "Fix this into valid JSON, keep the same content:\n\n" + result }] }],
@@ -226,7 +241,7 @@ async function runAgentWithPdf({ pdfPath, prompt, theme, modelName }) {
 /**
  * Run the agent with extracted text (fallback when direct PDF fails).
  */
-async function runAgentWithText({ text, prompt, theme, modelName }) {
+async function runAgentWithText({ text, prompt, theme, modelName, apiKey }) {
   const trimmed = text.slice(0, MAX_CONTEXT_CHARS);
 
   const userMessage =
@@ -241,13 +256,13 @@ async function runAgentWithText({ text, prompt, theme, modelName }) {
       contents: [{ role: "user", parts: [{ text: userMessage }] }],
     });
     return res.response.text();
-  }, modelName || DEFAULT_MODEL);
+  }, modelName || DEFAULT_MODEL, apiKey);
 
   let plan;
   try {
     plan = parseAgentJson(result);
   } catch {
-    const repair = createModel(usedModel);
+    const repair = createModel(apiKey, usedModel);
     const repairRes = await repair.generateContent({
       generationConfig: { responseMimeType: "application/json", temperature: 0 },
       contents: [{ role: "user", parts: [{ text: "Fix this into valid JSON, keep the same content:\n\n" + result }] }],

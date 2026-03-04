@@ -123,12 +123,13 @@ JSON Schema Requirements:
 - subSections follow the same structure: heading, content, bullets, numbered.
 - Style: Ensure "academic" is used for formal reports.`;
 
-function getGeminiModel(modelName = DEFAULT_MODEL) {
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error("GEMINI_API_KEY is missing in backend .env");
+function getGeminiModel(apiKey, modelName = DEFAULT_MODEL) {
+  const key = apiKey || process.env.GEMINI_API_KEY;
+  if (!key) {
+    throw new Error("No API key provided. Please add your Gemini API key in the app settings.");
   }
 
-  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+  const genAI = new GoogleGenerativeAI(key);
   return genAI.getGenerativeModel({
     model: modelName,
     systemInstruction: SYSTEM_PROMPT,
@@ -145,13 +146,13 @@ function uniqueModelList(modelName) {
   return [...new Set(ordered)];
 }
 
-async function runWithModelFallback(task, preferredModel) {
+async function runWithModelFallback(task, preferredModel, apiKey) {
   const modelsToTry = uniqueModelList(preferredModel);
   let lastError;
 
   for (const currentModel of modelsToTry) {
     try {
-      const model = getGeminiModel(currentModel);
+      const model = getGeminiModel(apiKey, currentModel);
       const result = await task(model);
       return { result, usedModel: currentModel };
     } catch (error) {
@@ -395,6 +396,7 @@ async function generateDocPlanFromPdfContext({
   includeTableOfContents,
   generationMode = "auto",
   modelName,
+  apiKey,
 }) {
   const mode = generationMode || "auto";
   const pdfAbsolutePath = resolvePdfPath(pdfPath);
@@ -414,14 +416,16 @@ async function generateDocPlanFromPdfContext({
   if (mode === "direct_pdf") {
     const { result, usedModel: resolvedModel } = await runWithModelFallback(
       (model) => generateWithDirectPdf({ model, pdfAbsolutePath, userInstruction: instruction }),
-      modelName
+      modelName,
+      apiKey
     );
     rawResponse = result;
     usedModel = resolvedModel;
   } else if (mode === "extracted_text") {
     const { result, usedModel: resolvedModel } = await runWithModelFallback(
       (model) => generateWithExtractedText({ model, pdfAbsolutePath, userInstruction: instruction }),
-      modelName
+      modelName,
+      apiKey
     );
     rawResponse = result;
     usedModel = resolvedModel;
@@ -429,7 +433,8 @@ async function generateDocPlanFromPdfContext({
     try {
       const { result, usedModel: resolvedModel } = await runWithModelFallback(
         (model) => generateWithDirectPdf({ model, pdfAbsolutePath, userInstruction: instruction }),
-        modelName
+        modelName,
+        apiKey
       );
       rawResponse = result;
       usedModel = resolvedModel;
@@ -437,7 +442,8 @@ async function generateDocPlanFromPdfContext({
     } catch {
       const { result, usedModel: resolvedModel } = await runWithModelFallback(
         (model) => generateWithExtractedText({ model, pdfAbsolutePath, userInstruction: instruction }),
-        modelName
+        modelName,
+        apiKey
       );
       rawResponse = result;
       usedModel = resolvedModel;
@@ -449,7 +455,7 @@ async function generateDocPlanFromPdfContext({
   try {
     parsed = parseModelJson(rawResponse);
   } catch {
-    const repairModel = getGeminiModel(usedModel);
+    const repairModel = getGeminiModel(apiKey, usedModel);
     const repairedRaw = await repairToStrictJson({ model: repairModel, rawText: rawResponse });
     parsed = parseModelJson(repairedRaw);
   }
