@@ -152,10 +152,17 @@ function validatePlan(plan) {
 /**
  * Run the agent with a text prompt (no PDF).
  */
-async function runAgentWithPrompt({ prompt, theme, modelName, apiKey }) {
+async function runAgentWithPrompt({ prompt, theme, modelName, apiKey, layoutBlocks }) {
+  let layoutInstruction = "";
+  if (layoutBlocks && layoutBlocks.length > 0) {
+    const seq = layoutBlocks.map((b, i) => `${i + 1}. ${b.type}${b.hint ? ` (Hint: ${b.hint})` : ""}`).join("\n");
+    layoutInstruction = `\n\nCRITICAL LAYOUT INSTRUCTION:\nYou MUST use EXACTLY this sequence of block types in your 'blocks' array. Do not add, remove, or reorder blocks. Fill in the content for each block based on the prompt and hints:\n${seq}`;
+  }
+
   const userMessage =
     `Create a beautifully designed document based on this request:\n\n${prompt}` +
-    (theme ? `\n\nPreferred theme: ${theme}` : "");
+    (theme ? `\n\nPreferred theme: ${theme}` : "") +
+    layoutInstruction;
 
   const { result, usedModel } = await callWithFallback(async (model) => {
     const res = await model.generateContent({
@@ -184,16 +191,23 @@ async function runAgentWithPrompt({ prompt, theme, modelName, apiKey }) {
 /**
  * Run the agent with a PDF file as context.
  */
-async function runAgentWithPdf({ pdfPath, prompt, theme, modelName, apiKey }) {
+async function runAgentWithPdf({ pdfPath, prompt, theme, modelName, apiKey, layoutBlocks }) {
   const absPath = path.isAbsolute(pdfPath) ? pdfPath : path.resolve(process.cwd(), pdfPath);
   if (!fs.existsSync(absPath)) throw new Error(`PDF not found: ${absPath}`);
 
   const pdfBase64 = fs.readFileSync(absPath).toString("base64");
 
+  let layoutInstruction = "";
+  if (layoutBlocks && layoutBlocks.length > 0) {
+    const seq = layoutBlocks.map((b, i) => `${i + 1}. ${b.type}${b.hint ? ` (Hint: ${b.hint})` : ""}`).join("\n");
+    layoutInstruction = `\n\nCRITICAL LAYOUT INSTRUCTION:\nYou MUST use EXACTLY this sequence of block types in your 'blocks' array. Do not add, remove, or reorder blocks. Fill in the content for each block based on the PDF and hints:\n${seq}`;
+  }
+
   const userMessage =
     `Analyze the attached PDF carefully and create a beautifully designed document.\n\n` +
     `Instructions: ${prompt || "Create a comprehensive, visually rich chapter based on the PDF content. Use specific names, data, and details from the PDF."}` +
-    (theme ? `\n\nPreferred theme: ${theme}` : "");
+    (theme ? `\n\nPreferred theme: ${theme}` : "") +
+    layoutInstruction;
 
   const { result, usedModel } = await callWithFallback(async (model) => {
     const res = await model.generateContent({

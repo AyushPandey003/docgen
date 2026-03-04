@@ -3,8 +3,9 @@ import axios from "axios";
 import {
   FileText, Upload, Download, Sparkles, Loader2,
   CheckCircle2, AlertCircle, Palette, Zap, Layers,
-  X, ChevronDown, Key, Eye, EyeOff, Shield,
+  X, ChevronDown, Key, Eye, EyeOff, Shield, LayoutGrid,
 } from "lucide-react";
+import LayoutBuilder from "./LayoutBuilder";
 
 // ── Config ─────────────────────────────────────────────────────────────────
 const API = "/api";
@@ -52,6 +53,10 @@ export default function App() {
   const [error, setError]         = useState("");
   const [showExamples, setShowExamples] = useState(false);
   const fileRef = useRef(null);
+
+  // ── Layout Builder State ───────────────────────────────────────
+  const [showLayout, setShowLayout]     = useState(false);
+  const [layoutBlocks, setLayoutBlocks] = useState([]);
 
   // ── API Key State ──────────────────────────────────────────────
   const [apiKey, setApiKey]               = useState(getSavedKey);
@@ -128,6 +133,9 @@ export default function App() {
       let response;
       const startTime = Date.now();
       const authHeaders = getAuthHeaders(apiKey);
+      const activeLayout = showLayout && layoutBlocks.length > 0
+        ? layoutBlocks.map(b => ({ type: b.type, hint: b.hint || undefined }))
+        : undefined;
 
       if (pdfFile) {
         // PDF mode
@@ -136,6 +144,7 @@ export default function App() {
         form.append("file", pdfFile);
         if (prompt.trim()) form.append("prompt", prompt.trim());
         form.append("theme", theme);
+        if (activeLayout) form.append("layoutBlocks", JSON.stringify(activeLayout));
 
         response = await axios.post(`${API}/generate-from-pdf`, form, {
           responseType: "blob",
@@ -143,10 +152,13 @@ export default function App() {
         });
       } else {
         // Text prompt mode
-        setStatusMsg("Agent is composing blocks and generating content...");
+        setStatusMsg(showLayout && layoutBlocks.length > 0
+          ? "Agent is following your custom layout and generating content..."
+          : "Agent is composing blocks and generating content...");
         response = await axios.post(`${API}/generate`, {
           prompt: prompt.trim(),
           theme,
+          layoutBlocks: activeLayout,
         }, { responseType: "blob", headers: authHeaders });
       }
 
@@ -404,8 +416,31 @@ export default function App() {
                 ))}
               </div>
             )}
+
+            {/* Layout Builder Toggle */}
+            <button
+              className={`layout-toggle ${showLayout ? "layout-toggle-active" : ""}`}
+              onClick={() => setShowLayout(v => !v)}
+              style={{ "--lt-color": themeObj.color }}
+            >
+              <LayoutGrid size={16} />
+              <span>{showLayout ? "Hide Layout Builder" : "Customize Layout"}</span>
+              {showLayout && layoutBlocks.length > 0 && (
+                <span className="layout-badge">{layoutBlocks.length}</span>
+              )}
+              <ChevronDown size={14} className={showLayout ? "rotated" : ""} />
+            </button>
           </div>
         </div>
+
+        {/* Layout Builder */}
+        {showLayout && (
+          <LayoutBuilder
+            blocks={layoutBlocks}
+            onChange={setLayoutBlocks}
+            accentColor={themeObj.color}
+          />
+        )}
 
         {/* Status */}
         {(status !== "idle") && (
