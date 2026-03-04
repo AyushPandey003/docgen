@@ -7,6 +7,7 @@ const multer  = require("multer");
 
 const { renderDocument, AVAILABLE_BLOCKS } = require("./docEngine");
 const { runAgentWithPrompt, runAgentWithPdf } = require("./agent");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const app  = express();
 const PORT = process.env.PORT || 5000;
@@ -48,10 +49,11 @@ app.get("/api/blocks", (_, res) => {
 app.post("/api/generate", async (req, res) => {
   const start = Date.now();
   try {
+    const apiKey = req.headers["x-api-key"];
     const { prompt, theme } = req.body;
     if (!prompt) return res.status(400).json({ error: "prompt is required." });
 
-    const { plan, usedModel } = await runAgentWithPrompt({ prompt, theme });
+    const { plan, usedModel } = await runAgentWithPrompt({ prompt, theme, apiKey });
 
     const filename = `doc_${Date.now()}.docx`;
     const filepath = path.join(OUTPUT_DIR, filename);
@@ -65,8 +67,9 @@ app.post("/api/generate", async (req, res) => {
       fs.unlink(filepath, () => {});
     });
   } catch (err) {
-    console.error("Generate error:", err);
-    res.status(500).json({ error: "Generation failed.", details: err.message });
+    console.error("Generate error:", err.message);
+    const status = err.message.includes("No API key") ? 401 : 500;
+    res.status(status).json({ error: err.message || "Generation failed." });
   }
 });
 
@@ -80,12 +83,14 @@ app.post("/api/generate-from-pdf", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "PDF file is required." });
 
+    const apiKey = req.headers["x-api-key"];
     const { prompt, theme } = req.body;
 
     const { plan, usedModel } = await runAgentWithPdf({
       pdfPath: uploadedPath,
       prompt,
       theme,
+      apiKey,
     });
 
     const filename = `pdf_${Date.now()}.docx`;
@@ -101,9 +106,10 @@ app.post("/api/generate-from-pdf", upload.single("file"), async (req, res) => {
       if (uploadedPath) fs.unlink(uploadedPath, () => {});
     });
   } catch (err) {
-    console.error("PDF generate error:", err);
+    console.error("PDF generate error:", err.message);
     if (uploadedPath) fs.unlink(uploadedPath, () => {});
-    res.status(500).json({ error: "PDF generation failed.", details: err.message });
+    const status = err.message.includes("No API key") ? 401 : 500;
+    res.status(status).json({ error: err.message || "PDF generation failed." });
   }
 });
 
@@ -134,6 +140,35 @@ app.post("/api/render", async (req, res) => {
 });
 
 // ── Start ──────────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/validate-key
+ * Body: { apiKey: string }
+ * Lightweight Gemini call to verify key validity.
+ */
+app.post("/api/validate-key", async (req, res) => {
+  try {
+    const apiKey = req.headers["x-api-key"];
+    if (!apiKey) {
+      return res.status(400).json({ valid: false, error: "API key is required." });
+    }
+
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: "Reply with OK" }] }],
+      generationConfig: { maxOutputTokens: 5 },
+    });
+
+    res.json({ valid: true });
+  } catch (err) {
+    const msg = String(err.message || "").toLowerCase();
+    if (msg.includes("api key") || msg.includes("unauthorized") || msg.includes("invalid")) {
+      return res.status(401).json({ valid: false, error: "Invalid API key." });
+    }
+    res.status(500).json({ valid: false, error: "Validation failed. Please try again." });
+  }
+});
 app.listen(PORT, () => {
   console.log(`\n  ✦  DocGen Agent running → http://localhost:${PORT}\n`);
 });
