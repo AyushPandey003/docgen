@@ -3,6 +3,7 @@ const express = require("express");
 const cors    = require("cors");
 const path    = require("path");
 const fs      = require("fs");
+const os      = require("os");
 const multer  = require("multer");
 
 const { renderDocument, AVAILABLE_BLOCKS } = require("./docEngine");
@@ -17,8 +18,8 @@ app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 
 // Directories
-const OUTPUT_DIR = path.join(__dirname, "outputs");
-const UPLOAD_DIR = path.join(__dirname, "uploads");
+const OUTPUT_DIR = path.join(os.tmpdir(), "outputs");
+const UPLOAD_DIR = path.join(os.tmpdir(), "uploads");
 [OUTPUT_DIR, UPLOAD_DIR].forEach(d => { if (!fs.existsSync(d)) fs.mkdirSync(d); });
 
 // Multer for PDF uploads
@@ -180,6 +181,10 @@ app.post("/api/validate-key", async (req, res) => {
     res.status(500).json({ valid: false, error: "Validation failed. Please try again." });
   }
 });
-app.listen(PORT, () => {
-  console.log(`\n  ✦  DocGen Agent running → http://localhost:${PORT}\n`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`\n  ✦  DocGen Agent running → http://localhost:${PORT}\n`);
+  });
+}
+
+module.exports = app;
